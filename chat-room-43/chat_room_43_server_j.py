@@ -139,11 +139,11 @@ class ChatServer(threading.Thread):
         :param msg: the message to send
         """
         # Pack the message with 4 leading bytes representing the message length.
-        msg = struct.pack('>I', len(str(msg))) + bytes(msg, 'utf8')
+        msg = struct.pack('>I', len(str(msg))) + bytes(msg, 'utf-8')
         # Sends the packed message.
         sock.send(msg)
 
-    def __receivemsg(self, sock):
+    def _receivemsg(self, sock):
         """
         Receive an incoming message from the client and unpack it.
         :param sock: the incoming socket
@@ -179,7 +179,7 @@ class ChatServer(threading.Thread):
             return data.decode('utf-8')
 
 
-    def __broadcastmsg(self, client_socket, client_message):
+    def _broadcast(self, client_socket, client_message):
         """
         Broadcast a message to all the clients different from both the server itself and
         the client sending the message (since it does not need it anyway; the
@@ -202,9 +202,6 @@ class ChatServer(threading.Thread):
         """
         Actually run the server.
         """
-        # Default the message type to "Unknown"
-        recv_msgtype = str("unk")
-
         while self.running:
             # Get the list of streams available for reading.
             # Select those amongst sockets available in connection pool.
@@ -231,42 +228,47 @@ class ChatServer(threading.Thread):
                             logging.info("Client %s:%d connected", client_address[0], client_address[1])
 
                             # Broadcast the "New guy has entered a room" message.
-                            struct_msg = json.dumps(\
-                                {
-                                    'uuid': str(uuid.uuid4()),
-                                    'username': self.username,
-                                    'type': 'ursmsg',
-                                    'body': "\r[{0}, {1}] entered the chat room".format(client_address[0], client_address[1])
-                                })
-                            self.__broadcastmsg(client_socket, struct_msg)
+                            struct_msg = json.dumps({
+                                'uuid': str(uuid.uuid4()),
+                                'username': self.username,
+                                'type': 0,
+                                'body': "\r[{0}, {1}] entered the chat room".format(client_address[0], client_address[1]),
+                                "command": None,
+                                "primarykey": None,
+                                "secondarykey": None
+                            })
+                            self._broadcast(client_socket, struct_msg)
                     # Else we've got an incoming connection.
                     else:
                         try:
                             # Try to receive the incoming message.
-                            data = self.__receivemsg(sock)
+                            data = self._receivemsg(sock)
                             # If is ok, i.e. there is a message.
                             if data:
-
                                 try:
                                     # Parse it (remember that we'are speaking JSON here).
                                     msg_dict = json.loads(data)
-                                    recv_msgtype = msg_dict['type']
+                                    recv_msgtype = msg_dict["type"]
+                                    recv_msguuid = msg_dict["uuid"]
+                                    recv_command = msg_dict["command"]
                                 except (ValueError, TypeError):
                                     # If we failed to parse that JSON message.
                                     # Then set the message type to "msgerr" which is
                                     # a...uh.. "message error" or "error message" or something.
-                                    recv_msgtype = "msgerr"
+                                    logging.info("Received invalid message from %s:%d", client_address[0], client_address[1])
+                                    # Then still broadcast it for client to take care of it.
+                                    self._broadcast(sock, data)
                                 # If received message is a user message
                                 # (the one that client/user is trying to send over to everyone).
                                 # Then do not bother parsing it and just broadcats instead.
-                                if recv_msgtype == "usrmsg":
+                                if recv_msgtype == 0:
                                     logging.info("Received/Broadcasting user message from %s:%d", client_address[0], client_address[1])
-                                    self.__broadcastmsg(sock, data)
+                                    self._broadcast(sock, data)
                                 # If received message is service message. Then parse and process it w/o broadcasting.
-                                elif recv_msgtype == "svcmsg":
+                                elif recv_msgtype == 1:
                                     logging.info("Received service message from %s:%d", client_address[0], client_address[1])
                                     # If received message is a "shutdown client connection" service message.
-                                    if msg_dict['body'] == 1:
+                                    if recv_command == 9:
                                         logging.info("Shutdown client command received; Disconnecting %s:%d", client_address[0], client_address[1])
                                         # Let client die, since client has initialised a local shutdown procedure before sending this message.
                                         # Just sleep for 2 seccond. This might be not necessary but still.
@@ -275,39 +277,29 @@ class ChatServer(threading.Thread):
                                         # Unbind the socket, print log message and disconnect the client.
                                         self._disconnect(sock, "Client %s:%d has been disconnected", client_address[0], client_address[1])
                                         continue
-                                    if msg_dict['body'] == 6:
-                                        struct_msg = json.dumps(\
-                                        {
-                                            'uuid': str(uuid.uuid4()),
-                                            'username': msg_dict['username'],
-                                            'type': 'svcmsg',
-                                            'msgcommand': 'status',
-                                            'newstatusstr': "Away",
-                                            'newstatusid': 1,
-                                            'body': "{0} has changed their status to Away".format(self.username)
-                                        })
-                                        self.__broadcastmsg(sock, struct_msg)
+                                    if recv_command == 0:
+                                        # TODO --------------------------------------------------------------------------------------------------------------------
+                                        # Save user status - username pairs in server db.
+                                        #
+
+                                        self._broadcast(sock, data)
 
                                     
                                     else:
                                         logging.info("Unknown command \"%s\" received from %s:%d", str(msg_dict),  client_address[0], client_address[1])
-                                # If received message is invalid.
-                                elif recv_msgtype == "msgerr":
-                                    logging.info("Received invalid message from %s:%d", client_address[0], client_address[1])
-                                    # Then still broadcast it for client to take care of it.
-                                    self.__broadcastmsg(sock, data)
-
                         except socket.error:
                             # Broadcast "Client has gone offline" message to
                             # all the connected clients stating that a client has left a room.
-                            struct_msg = json.dumps(\
-                                {
-                                    'uuid': str(uuid.uuid4()),
-                                    'username': self.username,
-                                    'type': 'usrmsg',
-                                    'body': "Client [{0}, {1}] has gone offline".format(client_address[0], client_address[1])
-                                })
-                            self.__broadcastmsg(sock, struct_msg)
+                            struct_msg = json.dumps({
+                                'uuid': str(uuid.uuid4()),
+                                'username': self.username,
+                                'type': 0,
+                                'body': "Client [{0}, {1}] has gone offline".format(client_address[0], client_address[1]),
+                                "command": None,
+                                "primarykey": None,
+                                "secondarykey": None
+                            })
+                            self._broadcast(sock, struct_msg)
                             self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_address[0], client_address[1]))
                             continue
         # Clear the connection and stop.
