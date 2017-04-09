@@ -1,7 +1,7 @@
 # #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""
+'''
 Chat Room 43: Client. v. 0.0.1
 
 Python 2.7+/3.4+ chat client program.
@@ -25,8 +25,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-"""
-
+'''
+# Python imports
 from __future__ import print_function
 import os
 import sys
@@ -34,30 +34,44 @@ import argparse
 import struct
 import socket
 import select
-import datetime
 import json
 import uuid
-import logging
-from StringIO import StringIO
-import atexit
 from datetime import datetime
 import time
-import pickle
+import atexit
 
-try:
-    from javax.swing import *
-    from java.lang import *
-    from java.awt import *
-    from java.awt.event import KeyEvent
-    from java.awt.event import ActionEvent
-    from javax.swing.table import DefaultTableModel
-    from java.util import *
+# Java imports.
+# Using absolute imports as wildcard imports will fail on attemp to
+# launch with a portable jython.
+# Also wildcard imports are not PEP8 compliant.
 
-    from javax.swing.border import *
-    from javax.swing.text import SimpleAttributeSet
-    from javax.swing.text import StyleConstants
-except ImportError as errmsg:
-    pass
+# Swing.
+from javax.swing import JFrame
+from javax.swing import JLabel
+from javax.swing import JTextPane
+from javax.swing import JScrollPane
+from javax.swing import JTextField
+from javax.swing import JButton
+from javax.swing import JPanel
+from javax.swing import JMenuBar
+from javax.swing import JMenu
+from javax.swing import JMenuItem
+from javax.swing import JComboBox
+from javax.swing import JTable
+from javax.swing.table import DefaultTableModel
+from javax.swing.text import SimpleAttributeSet
+from javax.swing.text import StyleConstants
+from javax.swing import WindowConstants
+from javax.swing import SwingConstants
+from javax.swing import KeyStroke
+
+# AWT
+from java.awt import BorderLayout
+from java.awt import Dimension
+from java.awt import Color
+from java.awt.event import KeyEvent
+from java.awt.event import ActionEvent
+
 
 # Module info.
 __version__ = "0.0.1"
@@ -72,91 +86,116 @@ __copyright__ = 'Copyright 2017 (C) Illia Burov'
 _HOST = '127.0.0.1'
 _PORT = 14344
 
-# Invitation Message.
-_PROLOGUE_MSG = 'Chat Room 43: Client'
-_INVITE_MSG = \
-    """\rWelcome to Chat room 43, a 90s-style obscure invite-only chatting space!
-    \rHow many gluten is there in your cheesecake, how tight to cut your pants or
-    \rhow many last.fm listeners your fav band has? We have a room for all of your
-    \rgreat questions and novel ideas! NO encryption, NO personal space, NO limits!
-    \rHit enter to start conversation; Then type your message and hit enter to
-    \rsend it. You will automatically receive messages from other users.
-    \rType \"!q\" or press Ctrl+C to exit chat room and disconnect from the server."""
-
 # Version information message.
 _VERSIONINO_MSG = "{0} v.{1}\n{2}\n{3}".format(__title__,
                                                __version__,
                                                __description__,
                                                __copyright__)
 
-
-
-
 class ChatClientBase(object):
-    """
-    Base chat client class.
-    """
+    '''
+    Base chat client class. Containt all the methods related to network
+    connection and message transmission
+    '''
 
     RECV_BUFFER = 4096
     RECV_MSG_LEN = 4
     MSG_TIME_FMT = "%H:%M:%S"
 
     def __init__(self, host, port, username):
-        """
+        '''
         Initializes a new ChatServer.
         :param host: the host on which the server is bounded
         :param port: the port on which the server is bounded
-        """
+        '''
+
         # Host/port for client to connect to.
         self.host = str(host)
         self.port = int(port)
-        # Connection list; all of incoming connections will be collected here.
+        # Connection list;
+        # all of incoming connections will be collected here.
         self.connections = list()
         # Username for current session.
         self.username = username
-        # State indicator; Determines whether the server is running/should run or not. 
+        # Client socket.
+        self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # State indicator;
+        # Determines whether the server is running/should run or not.
         self.running = False
         self.is_connected = False
-        self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.is_gui_condition = False
+        # "Do not reconnect flag" used to handle "Disconnect" menuitem action.
+        self.do_not_reconnect = False
 
 
     def display_incoming_message(self, from_user, message):
+        '''
+        Print incoming message out (CLImode only).
+        '''
 
-        msg_prefix = "[{0} {1}]: ".format(datetime.fromtimestamp(time.time()).strftime("%m/%d %H:%M:%S"), from_user)
+        msg_prefix = "[{0} {1}]: ".format(
+            datetime.fromtimestamp(
+                time.time()
+                ).strftime("%m/%d %H:%M:%S"),
+            from_user
+            )
         print("{0}{1}\n".format(msg_prefix, message))
 
 
     def socket_connect(self):
-        """
-        Open a socket and bind it to the host and port.
-        """
-        self.display_incoming_message("System", "Trying to connect to server at {0}:{1}".format(self.host, self.port))
-        
+        '''
+        Open a socket, bind it to the host and port. Try to connecto to server.
+        '''
+
+        self.display_incoming_message(
+            "System",
+            "Trying to connect to server at {0}:{1}".format(
+                self.host,
+                self.port
+                )
+            )
+
         self.client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             self.client.connect((self.host, self.port))
         except socket.error as exc_msg:
-            self.display_incoming_message("System", "Unable to connect to server at {0}:{1} ({2})".format(self.host,
-                                                                        self.port,
-                                                                        os.strerror(exc_msg.errno)))
+            self.display_incoming_message(
+                "System",
+                "Unable to connect to server at {0}:{1} ({2})".format(
+                    self.host,
+                    self.port,
+                    os.strerror(exc_msg.errno)
+                    )
+                )
             self.stop()
         else:
             self.is_connected = True
-            self.display_incoming_message("System", "Connected to server at {0}:{1}".format(self.host, self.port))
+            self.display_incoming_message(
+                "System",
+                "Connected to server at {0}:{1}".format(
+                    self.host,
+                    self.port
+                    )
+                )
             self.connections.append(self.client)
             self.running = True
 
-    # A method prefixed with two underscores, just like this one is
-    # is a protected method.
-    def sendmsg(self, msg, msgtype=0, command=None, actionkey=None, primarykey=None, secondarykey=None):
-        """
+    def sendmsg(self,
+                msg,
+                msgtype=0,
+                command=None,
+                actionkey=None,
+                primarykey=None,
+                secondarykey=None):
+        '''
         Prefix a message with 4-bytes long length indicator,
         wrap it into JSON structure and sen it over to server.
         :param msg: the message to send
-        """
+        '''
+
         # Maybe use a time when user sends a message rather
-        # than the when one receives it.
+        # than the when he/she receives it.
+        # TODO?
         # Message Type IDs:
         # 0 : User Message
         # 1 : Service Message
@@ -169,12 +208,15 @@ class ChatClientBase(object):
             'type': msgtype,
             'body': msg,
             "command": command,
-            "actionkey": actionkey,
+            "action": actionkey,
             "primarykey": primarykey,
             "secondarykey": secondarykey
         })
         # Prepend a lenght prefix,
-        snd_msg = struct.pack('>I', len(struct_msg)) + bytes(struct_msg).encode('utf-8')
+        snd_msg = struct.pack(
+            '>I',
+            len(struct_msg)
+            ) + bytes(struct_msg).encode('utf-8')
         # Actually send a message.
         try:
             self.client.send(snd_msg)
@@ -182,34 +224,27 @@ class ChatClientBase(object):
             self.display_incoming_message("System", "Unable to send message.")
 
     def receivemsg(self):
-        """
-        Receive the message from a server, unpack and (probably) parse it.
-        :param sock: the incoming socket
-        :param ret_code: the return code (whether the message is ok)
-        :param ret_data: the unpacked message
-        message type ids:
-        0 : user message
-        1 : service message
+        '''
+        Receive the message from a server, unpack and parse it.
+        Return received message as a tuple of values.
+        '''
 
-        """
         # Will be used to store received data.
         data = None
         # Will be used to compose message.
-        msg_dict = dict()
-        # Will hold the data to be returned.
-        ret_data = str()
+        msg_dict = dict().fromkeys(['username',
+                                    'body',
+                                    'type',
+                                    'command',
+                                    'action',
+                                    'primarykey',
+                                    'secondarykey'],
+                                   None
+                                  )
         # Will hold the error code.
         ret_code = 0
         # Will hold the total length of message (all chunks combined).
         msg_total_length = 0
-
-        ret_username = None
-        ret_body = None
-        ret_msgtype = None
-        ret_command = None
-        ret_action = None
-        ret_primarykey = None
-        ret_secondarykey = None
 
         # Retrieve the first 4 bytes of the message.
         while msg_total_length < self.RECV_MSG_LEN:
@@ -237,124 +272,63 @@ class ChatClientBase(object):
         # Received nothing (no connection).
         if not data:
             ret_code = 3
-            ret_username = "System"
-            ret_body = "No data received. (Disconnected from server)"
+            msg_dict['username'] = "System"
+            msg_dict['body'] = "No data received. (Disconnected from server)"
         else:
             # Try to parse JSON message response.
             try:
-                msg_dict = json.loads(data.decode('utf-8'))
-                current_time = datetime.now()
-                ret_username = msg_dict['username']
-                ret_body = msg_dict['body']
-                ret_msgtype = msg_dict['type']
-                ret_command = msg_dict['command']
-                ret_action = msg_dict['actionkey']
-                ret_primarykey = msg_dict['primarykey']
-                ret_secondarykey = msg_dict['secondarykey']
+                # Update the msg_dict with what is received.
+                msg_dict.update(json.loads(data.decode('utf-8')))
+                ret_code = 0
             # Received somehting that is not JSON.
-            except ValueError as errmsg:
+            except ValueError:
                 ret_code = 1
-                ret_body = "Invalid message format. Discarding message."
-                ret_username = "System"
+                msg_dict['body'] = "Invalid message format. Discarding message."
+                msg_dict['username'] = "System"
             # Received something that is JSON but with no required keys.
-            except KeyError as errmsg:
+            except KeyError:
                 ret_code = 2
-                ret_body = "Incomplete message received. Discarding message."
-                ret_username = "System"
-        # Return e.g. (0, {"user": "Jane Doe", "body": "Hi there!"})
-        return (ret_code, ret_username, ret_body, ret_msgtype, ret_command, ret_action, ret_primarykey, ret_secondarykey)
-
-
-
+                msg_dict['body'] = "Incomplete message received. Discarding message."
+                msg_dict['username'] = "System"
+        # Return e.g. (0, "Jane Doe", "Hi there!" etc.)
+        return (
+            ret_code,
+            msg_dict['username'],
+            msg_dict['body'],
+            msg_dict['type'],
+            msg_dict['command'],
+            msg_dict['action'],
+            msg_dict['primarykey'],
+            msg_dict['secondarykey']
+            )
 
     def stop(self):
-        """
-        Stops the server by setting the "running" flag before closing
+        '''
+        Stop the server by setting the "running" flag before closing
         the socket connection, this will break the application loop.
-        """
-        self.display_incoming_message("System", "Stopping client. Tearing down the connection...")
+        '''
+        self.display_incoming_message(
+            "System",
+            "Stopping client. Tearing down the connection..."
+            )
         # Shutting down the socket (no ReaDs or WRites allowed anymore)
-        # :msg 1: shutdown
         self.sendmsg(None, msgtype=1, command=9)
         try:
             self.client.shutdown(socket.SHUT_WR)
             self.client.close()
         except socket.error:
-            self.display_incoming_message("System", "Unable to close connection to server (Not connected?)")
+            self.display_incoming_message(
+                "System",
+                "Unable to close connection to server (Not connected?)"
+                )
         self.running = False
-
-    def msgexchange(self):
-        """
-        Exchanges messages between client and server.
-        """
-        # While 'running' flag is True.
-        while self.running:
-            # Get the list of streams available for reading.
-            # Select those amongst STDIN and the socket.
-            # Note that this is the place where whole thing will fail on non-Unix
-            # since the select call cannot actualle select stdin on these systems.
-            sys.stdout.write("You: ")
-            sys.stdout.flush()
-            ready_to_read, ready_to_write, in_error = select.select([sys.stdin, self.client],
-                                                                    [],
-                                                                    [])
-            for read_stream in ready_to_read:
-                # Incoming message from server (socket is ready to be read from)
-                if read_stream == self.client:
-                    # Receiving message from server.
-                    # recv_data = read_stream.recv(self.RECV_BUFFER)
-                    recv_status, recv_username, recv_body, recv_msgtype, recv_command, recv_action, recv_primarykey, recv_secondarykey = self.receivemsg()
-                    # If there is no message.
-
-                    if recv_status != 0:
-                        self.display_incoming_message(recv_username, "{0} ({1})".format(recv_body, recv_status))
-                        if recv_status == 3:
-                            self.stop()
-                            break
-                        else:
-                            continue
-                    else:
-                        # Print received message.
-                        self.display_incoming_message(recv_username, "{0}".format(recv_body.strip()))
-                # User entered the message (STDIN is ready to be read from)
-                else:
-                    # Reading the line of user input.
-                    msg = sys.stdin.readline()
-                    # If the 'quit' command received.
-                    # If received message exacly matches any service message pattern.
-                    if any([bool(re.match(cmd_pattern, msg.strip().lower())) for cmd_pattern in ["^\!q$", "^\!quit$", "^\!shutdown$", "^\!status:.*$"]]):
-                        # If requested send "shutdown" service message to server
-                        # :msg 1: shutdown
-                        # :msg 9: shutdown server (Should be avoided)
-                        # :msg 5: set "online" status.
-                        # :msg 6: set "away" status.
-                        # :msg 7: set "dnd" status.
-                        # :msg 8: set "offline" status and disconnect from server.
-                        # str.startswith("foo") is much faster than re.match("^foo")
-                        if msg.startswith("!shutdown"):
-                            self.sendmsg(1, msgtype=1)
-                        elif msg.startswith("!status:"):
-                            status_id = msg.split(":")[-1]
-                            if status_id == "on":
-                                self.sendmsg(5, msgtype=1)
-                            elif status_id == "afk":
-                                self.sendmsg(6, msgtype=1)
-                            elif status_id == "dnd":
-                                self.sendmsg(7, msgtype=1)
-                            elif status_id == "off":
-                                # First send "set offline status" service message.
-                                self.sendmsg(8, msgtype=1)
-                                # Then send "connection shutdown" service message.
-                                self.sendmsg(1, msgtype=1)
-                        # Stopping the client and tearing down the connection.
-                        self.stop()
-                        break
-                    self.sendmsg(msg)
 
 
 
 class ChatClientGUI(ChatClientBase):
-
+    '''
+    GUI
+    '''
 
     def __init__(self, host, port, username):
         
@@ -376,38 +350,45 @@ class ChatClientGUI(ChatClientBase):
 
     
         # Main JFrame
-        self.container_main_frame = JFrame(self.app_title)
+        self.container_main_frame = JFrame(self.app_title, 
+            windowClosing=self.dispose_and_exit
+            )
         self.container_main_frame.setResizable(False)
-        self.container_main_frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE)
+        self.container_main_frame.setDefaultCloseOperation(
+            WindowConstants.DISPOSE_ON_CLOSE
+            )
 
         # IM JTextArea
         self.im_text_pane = JTextPane()
-        self.im_text_pane.setPreferredSize(Dimension(self.text_pane_w, self.text_pane_h))
+        self.im_text_pane.setPreferredSize(Dimension(self.text_pane_w,
+                                                     self.text_pane_h))
         self.im_text_pane_styled_doc = self.im_text_pane.getStyledDocument()
         self.im_text_pane.setEditable(False)
         im_scroll_panel = JScrollPane()
         im_scroll_panel.getViewport().setView(self.im_text_pane)
-        im_scroll_panel.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS)
+        im_scroll_panel.setVerticalScrollBarPolicy(
+            JScrollPane.VERTICAL_SCROLLBAR_ALWAYS
+            )
 
         # User input field label.
-        inputLabel = JLabel("You: ")
-        input_label_dimension_common = inputLabel.getPreferredSize()
+        input_label = JLabel("You: ")
+        input_label_dimension_common = input_label.getPreferredSize()
         input_label_dimension_common.height = self.common_control_label_h
-        inputLabel.setPreferredSize(input_label_dimension_common)
-        inputLabel.setHorizontalAlignment(SwingConstants.LEFT)
-        
+        input_label.setPreferredSize(input_label_dimension_common)
+        input_label.setHorizontalAlignment(SwingConstants.LEFT)
+
         # Controls pane.
         im_control_panel = JPanel()
         im_control_panel.setLayout(BorderLayout())
-        im_control_panel.add(inputLabel, BorderLayout.LINE_START)
+        im_control_panel.add(input_label, BorderLayout.LINE_START)
 
         # User input field.
         self.im_input_field = JTextField("", 12)
         button_send = JButton("Send", actionPerformed=self.action_send_button)
         button_send.setPreferredSize(Dimension(92, 0))
         im_control_panel.add(self.im_input_field, BorderLayout.CENTER)
-        im_control_panel.add(button_send,  BorderLayout.LINE_END)
-        
+        im_control_panel.add(button_send, BorderLayout.LINE_END)
+
         # IM panel (Text area and input field-send-button group)
         im_inner_panel = JPanel()
         im_inner_panel.setLayout(BorderLayout())
@@ -417,56 +398,59 @@ class ChatClientGUI(ChatClientBase):
         # Current user status dropdown menu and label panel.
         current_status_panel = JPanel()
         current_status_panel.setLayout(BorderLayout())
-        current_status_select_label = JLabel(self.username[:8] + (self.username[8:] and "..."))
+        current_status_select_label = JLabel(
+            self.username[:8] + (self.username[8:] and "...")
+            )
         self.current_status_select_cbox = JComboBox(self.avail_status_list)
-        self.current_status_select_cbox.addActionListener(self.action_status_combo)
-        self.current_status_select_cbox.setSelectedIndex(0)
+        self.current_status_select_cbox.addActionListener(
+            self.action_status_combo
+            )
+        self.current_status_select_cbox.setSelectedIndex(3)
         # petList.addActionListener(this);
 
-        current_status_panel.add(current_status_select_label, BorderLayout.LINE_START)
-        current_status_panel.add(self.current_status_select_cbox, BorderLayout.LINE_END)
-
+        current_status_panel.add(current_status_select_label,
+                                 BorderLayout.LINE_START)
+        current_status_panel.add(self.current_status_select_cbox,
+                                 BorderLayout.LINE_END)
 
         # Online users panel.
-        online_users_panel = JPanel()
-        online_users_panel.setLayout(BorderLayout())
+        pnale_online_usr = JPanel()
+        pnale_online_usr.setLayout(BorderLayout())
         online_users_label = JLabel("Online Users: ")
-        online_users_label_dimension_common = online_users_label.getPreferredSize()
-        online_users_label_dimension_common.height = self.common_control_label_h
-        online_users_label.setPreferredSize(online_users_label_dimension_common)
+        dim_label_usr_common = online_users_label.getPreferredSize()
+        dim_label_usr_common.height = self.common_control_label_h
+        online_users_label.setPreferredSize(dim_label_usr_common)
         online_user_count_label = JLabel("0")
         online_user_count_label.setHorizontalAlignment(SwingConstants.LEFT)
-        online_users_panel.add(online_users_label, BorderLayout.LINE_START)
-        online_users_panel.add(online_user_count_label, BorderLayout.CENTER)
+        pnale_online_usr.add(online_users_label, BorderLayout.LINE_START)
+        pnale_online_usr.add(online_user_count_label, BorderLayout.CENTER)
 
         # Online users table view.
-        self.online_table_dm = DefaultTableModel([None,None], self.online_users_table_cols)
+        self.online_table_dm = DefaultTableModel(
+            [None, None],
+            self.online_users_table_cols
+        )
         self.table = JTable(self.online_table_dm)
         self.table.setShowGrid(False)
 
         # Table view scroll pane.
         scroll_pane_table = JScrollPane()
         scroll_pane_table.setPreferredSize(Dimension(self.online_table_w, 0))
-        scroll_pane_table.getViewport().setBackground(Color.WHITE);
+        scroll_pane_table.getViewport().setBackground(Color.WHITE)
         scroll_pane_table.getViewport().setView((self.table))
 
         # Split view container.
-        container_split_pane_vertical_right = JPanel()
-        container_split_pane_vertical_right.setLayout(BorderLayout())
-        container_split_pane_vertical_right.add(current_status_panel, BorderLayout.PAGE_START)
-        container_split_pane_vertical_right.add(scroll_pane_table, BorderLayout.CENTER)
-        container_split_pane_vertical_right.add(online_users_panel, BorderLayout.PAGE_END)
-        
-        
-        # # "Online Users" label.
-        # online_label = JLabel("Online Users: 0")
-        # container_split_pane_vertical_right.add(online_label, BorderLayout.PAGE_END)
+        cont_split_pane_vr = JPanel()
+        cont_split_pane_vr.setLayout(BorderLayout())
+        cont_split_pane_vr.add(current_status_panel, BorderLayout.PAGE_START)
+        cont_split_pane_vr.add(scroll_pane_table, BorderLayout.CENTER)
+        cont_split_pane_vr.add(pnale_online_usr, BorderLayout.PAGE_END)
 
-        container_split_pane_h = JPanel()
-        container_split_pane_h.setLayout(BorderLayout())
-        container_split_pane_h.add(container_split_pane_vertical_right, BorderLayout.LINE_START)
-        container_split_pane_h.add(im_inner_panel, BorderLayout.LINE_END)
-        
+        cont_split_pane_h = JPanel()
+        cont_split_pane_h.setLayout(BorderLayout())
+        cont_split_pane_h.add(cont_split_pane_vr, BorderLayout.LINE_START)
+        cont_split_pane_h.add(im_inner_panel, BorderLayout.LINE_END)
+
         # Main menua bar.
         main_menu_bar = JMenuBar()
 
@@ -477,32 +461,45 @@ class ChatClientGUI(ChatClientBase):
 
         # "Exit" menu item.
         reconnect_mitem = JMenuItem("Exit", KeyEvent.VK_T, actionPerformed=self.dispose_and_exit)
-        reconnect_mitem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F10, ActionEvent.ALT_MASK))
+        reconnect_mitem.setAccelerator(
+            KeyStroke.getKeyStroke(KeyEvent.VK_F10, ActionEvent.ALT_MASK)
+            )
         reconnect_mitem.getAccessibleContext().setAccessibleDescription("Exit")
-        menu_file.add(reconnect_mitem);
-        
+        menu_file.add(reconnect_mitem)
+
         # "Connection" menu.
         menu_connection = JMenu("Connection")
         menu_connection.setMnemonic(KeyEvent.VK_A)
-        menu_connection.getAccessibleContext().setAccessibleDescription("Server Connection Manipulations")
-        
+        menu_connection.getAccessibleContext().setAccessibleDescription(
+            "Server Connection Manipulations"
+            )
+
         # "Re-connect" menu item.
         reconnect_mitem = JMenuItem("Re-connect", KeyEvent.VK_T)
-        reconnect_mitem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_1, ActionEvent.ALT_MASK))
-        reconnect_mitem.getAccessibleContext().setAccessibleDescription("Re-connect to the server")
-        menu_connection.add(reconnect_mitem);
+        reconnect_mitem.setAccelerator(
+            KeyStroke.getKeyStroke(KeyEvent.VK_1, ActionEvent.ALT_MASK)
+            )
+        reconnect_mitem.getAccessibleContext().setAccessibleDescription(
+            "Re-connect to the server"
+            )
+        menu_connection.add(reconnect_mitem)
 
         # "Disconnect" menu item.
         disconnect_mitem = JMenuItem("Disconnect", KeyEvent.VK_T)
-        disconnect_mitem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_2, ActionEvent.ALT_MASK))
-        disconnect_mitem.getAccessibleContext().setAccessibleDescription("Disconnect from the server")
-        menu_connection.add(disconnect_mitem);
+        disconnect_mitem.setAccelerator(
+            KeyStroke.getKeyStroke(KeyEvent.VK_2, ActionEvent.ALT_MASK)
+            )
+        disconnect_mitem.getAccessibleContext().setAccessibleDescription(
+            "Disconnect from the server"
+            )
+        menu_connection.add(disconnect_mitem)
 
         main_menu_bar.add(menu_file)
         main_menu_bar.add(menu_connection)
-       
-        container_split_pane_h.add(main_menu_bar, BorderLayout.PAGE_START)
-        self.container_main_frame.add(container_split_pane_h)
+
+        cont_split_pane_h.add(main_menu_bar, BorderLayout.PAGE_START)
+
+        self.container_main_frame.add(cont_split_pane_h)
         self.container_main_frame.pack()
         self.container_main_frame.setVisible(True)
         self.im_input_field.requestFocus()
@@ -510,52 +507,85 @@ class ChatClientGUI(ChatClientBase):
 
     def display_incoming_message(self, from_user, message):
 
-        msg_prefix = "[{0} {1}]: ".format(datetime.fromtimestamp(time.time()).strftime("%m/%d %H:%M:%S"), from_user)
-
+        msg_prefix = "[{0} {1}]: ".format(
+            datetime.fromtimestamp(
+                time.time()
+                ).strftime("%m/%d %H:%M:%S"),
+            from_user
+            )
         styled_label = SimpleAttributeSet()
         StyleConstants.setForeground(styled_label, self.colour_blue)
         StyleConstants.setBold(styled_label, True)
-
-        self.im_text_pane_styled_doc.insertString(self.im_text_pane_styled_doc.getLength(), msg_prefix , styled_label)
-        self.im_text_pane_styled_doc.insertString(self.im_text_pane_styled_doc.getLength(), "{0}\n".format(message), None)
+        self.im_text_pane_styled_doc.insertString(
+            self.im_text_pane_styled_doc.getLength(),
+            msg_prefix,
+            styled_label
+            )
+        self.im_text_pane_styled_doc.insertString(
+            self.im_text_pane_styled_doc.getLength(),
+            "{0}\n".format(message),
+            None
+            )
 
     def action_send_button(self, event):
+        del event
         self.ready_to_send = False
         msg_text = self.im_input_field.getText()
         if self.im_input_field.getText():
             self.ready_to_send = True
-
         self.display_incoming_message("You", msg_text)
         self.sendmsg(msg_text, msgtype=0)
-        
         self.im_input_field.setText(None)
         self.im_input_field.requestFocus()
 
-    def action_status_combo(self, event):
-        selected_status_index = int(event.getSource().getSelectedIndex())
+    def action_status_combo(self, event=None):
+        del event
+        selected_status_index = int(
+            self.current_status_select_cbox.getSelectedIndex()
+            )
         self.sendmsg(None, msgtype=1, command=0, primarykey=selected_status_index)
 
-
-    def dispose_and_exit(self, event):
+    def dispose_and_exit(self, event=None):
+        del event
+        self.stop()
         self.container_main_frame.dispose()
         sys.exit(0)
 
 
     def msgexchange(self):
-        """
+        '''
         Exchanges messages between client and server.
-        """
+        '''
+        # Connect to server if not connected yet.
+        if not self.is_connected:
+            self.socket_connect()
+
+        # Programmatically select "Online" status. It wil trigger 
+        # "action_status_combo" action.
+        self.current_status_select_cbox.setSelectedIndex(0)
+
         # While 'running' flag is True.
         while self.running:
             # Get the list of streams available for reading.
             # Select those amongst STDIN and the socket.
             # Note that this is the place where whole thing will fail on non-Unix
             # since the select call cannot actualle select stdin on these systems.
-            ready_to_read, ready_to_write, in_error = select.select([self.client],[],[])
-            if self.client in ready_to_read:
+
+        
+            (rlist, wlist, elist) = select.select([self.client], [], [])
+            if self.client in rlist:
                 # Receiving message from server.
                 # recv_data = read_stream.recv(self.RECV_BUFFER)
-                recv_status, recv_username, recv_body, recv_msgtype, recv_command, recv_action, recv_primarykey, recv_secondarykey = self.receivemsg()
+                (
+                    recv_status,
+                    recv_username,
+                    recv_body,
+                    recv_msgtype,
+                    recv_command,
+                    recv_action,
+                    recv_primarykey,
+                    recv_secondarykey
+                ) = self.receivemsg()
                 # recv_msgtype = recv_dict["type"]
                 # recv_command = recv_dict[""]
                 # If there is no message.
@@ -568,16 +598,11 @@ class ChatClientGUI(ChatClientBase):
                 else:
                     # Print received message.
                     if recv_msgtype == 0:
-                        self.display_incoming_message(recv_username, "{0}".format(recv_body.strip()))
-                    elif recv_msgtype == 1:
-                        # TODO: Set statuses ------------------------------------------------------------------------------
-                        # self.display_incoming_message("Service message", "{0}".format(str(self.online_table_dm.columnIdentifiers)))
-                        # row_cnt = self.online_table_dm.getRowCont()
-                        # col_cnt = self.online_table_dm.getColumnCont()
-                        # for i in xrange(1, row_cnt):
-                        #     if 
-                            # for j in xrnage(1, col_cnt):
-                            #     if
+                        self.display_incoming_message(
+                            recv_username,
+                            "{0}".format(recv_body.strip())
+                        )
+                    elif recv_msgtype == 1 and recv_command == 0:
                         dm_row_count = self.online_table_dm.getRowCount()
                         dm_col_count = self.online_table_dm.getColumnCount()
                         recv_set_status = self.avail_status_list[recv_primarykey]
@@ -588,20 +613,23 @@ class ChatClientGUI(ChatClientBase):
                             col_username_value = self.online_table_dm.getValueAt(dm_row_index, 0)
                             col_status_value = self.online_table_dm.getValueAt(dm_row_index, 1)
                             if not col_username_value and not col_status_value:
-                                srow_to_remove.append(dm_row_index)   
+                                list_rows_to_remove.append(dm_row_index)   
                                 switch_should_add_row = True
                             elif col_username_value == recv_username:
                                 if col_status_value == recv_set_status:
                                     # Already has the status that is about to be set.
                                     switch_should_add_row = False
+
                                     if switch_duplicated_row:
-                                        row_to_remove.append(dm_row_index)                                        
+                                        list_rows_to_remove.append(dm_row_index)                                        
                                         switch_should_add_row = False
                                     else:
                                         switch_duplicated_row = True
                                 else:
                                     self.online_table_dm.setValueAt(recv_set_status, dm_row_index, 1)
                                     self.online_table_dm.fireTableDataChanged()
+                                    # Display "User changed their status" message.
+                                    self.display_incoming_message("System", "{0} changed their status to \"{1}\"".format(recv_username, recv_set_status))
                             else:
                                 switch_should_add_row = True
 
@@ -612,48 +640,8 @@ class ChatClientGUI(ChatClientBase):
                         if switch_should_add_row:
                             self.online_table_dm.addRow([recv_username, recv_set_status])
                             self.online_table_dm.fireTableDataChanged()
-
-
-
-
-
-
-
-
-
-                        # tbl_data_vector = self.online_table_dm.getDataVector()
-                        # tbl_duplicate_row = False
-                        # tbl_altered_row = False
-                        # # Manipulating data vector is faster than checking each row and column at the time. 
-                        # # FSM
-                        # for enum, i in enumerate(tbl_data_vector):
-                        #     if i == [recv_username, self.avail_status_list[recv_primarykey]]:
-                        #         if tbl_duplicate_row:
-                        #             tbl_duplicate_row = False
-                        #         else:
-                        #             tbl_duplicate_row = True
-                        #         continue
-                        #     elif i[0] == recv_username:
-                        #         i[1] = self.avail_status_list[recv_primarykey]
-                        #         tbl_altered_row = True
-                        # if not tbl_altered_row:
-                        #     self.online_table_dm.addRow([recv_username, self.avail_status_list[recv_primarykey]])
-                        # else:
-                        #     self.online_table_dm.setDataVector(Vector(tbl_data_vector), Vector(['User','Status']))
-
-
-
-
-
-
-
-                        
-                        # self.display_incoming_message("Service message", "{0}".format(str(tbl_data_vector)))
-
-# [x for x in xrange(0, len(tbl_data_vector))]
-                        # self.online_table_dm.addRow([recv_username, self.avail_status_list[recv_primarykey]])
-
-            # User entered the message (STDIN is ready to be read from)
+                    elif recv_msgtype == 1 and recv_command == 7:
+                        self.display_incoming_message("System", "User {0} has gone offline".format(recv_username))
             else:
                 # Reading the line of user input.
                 if not self.ready_to_send:
@@ -664,10 +652,10 @@ class ChatClientGUI(ChatClientBase):
 
 
 def main():
-    """
+    '''
     The Main. 
     Parse arguments and run a client session.
-    """
+    '''
     argparser = argparse.ArgumentParser(\
         formatter_class=argparse.RawTextHelpFormatter,
         description='Chat Room 43: Client',
@@ -706,7 +694,7 @@ def main():
     # self.display_incoming_message("{0}\n\n{1}".format(_PROLOGUE_MSG, _INVITE_MSG))
 
     connection = ChatClientGUI(parsed_args.host, parsed_args.port, parsed_args.username)
-    connection.socket_connect()
+
     try:
         connection.msgexchange()
     # If user hits Ctrl + C

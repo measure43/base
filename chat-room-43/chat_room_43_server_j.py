@@ -1,7 +1,7 @@
 # #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
+'''
 Chat Room 43: Server. v. 0.0.1
 
 Python 2.7+/3.4+ chat server program.
@@ -25,7 +25,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-"""
+'''
 
 from __future__ import print_function
 import sys
@@ -40,7 +40,7 @@ import logging
 import time
 
 # Module info.
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 __author__ = "Illia Burov"
 __title__ = 'Chat Room 43: Server'
 __description__ = 'A simple message exchange server program.'
@@ -62,13 +62,17 @@ _VERSIONINO_MSG = "{0} v.{1}\n{2}\n{3}".format(__title__,
 # Log message format.
 LOG_FORMAT = "%(asctime)-15s %(levelname)s: %(message)s"
 # Set logging configuration.
-logging.basicConfig(format=LOG_FORMAT, level=logging.DEBUG, datefmt="%d/%m/%y-%H:%M:%S")
+logging.basicConfig(
+    format=LOG_FORMAT,
+    level=logging.DEBUG,
+    datefmt="%d/%m/%y-%H:%M:%S"
+    )
 
 
 class ChatServer(threading.Thread):
-    """
+    '''
     Base chat server class (threaded).
-    """
+    '''
     # The size of connection queue.
     CONN_QUEUE = 10
     # The size of a message buffer.
@@ -77,11 +81,11 @@ class ChatServer(threading.Thread):
     RECV_MSG_LEN_PREFIX = 4
 
     def __init__(self, host, port):
-        """
+        '''
         Initialise a new ChatServer.
         :param host: the host on which the server is bound
         :param port: the port on which the server is bound
-        """
+        '''
         # Initialise the tread new.
         threading.Thread.__init__(self)
         # Host/port for server to listen at.
@@ -91,27 +95,28 @@ class ChatServer(threading.Thread):
         self.connections = list()
         # State indicator; Determines whether the server is running/should run or not.
         self.running = bool(True)
-        # Username; In case the server will send a text message to user the self.username
-        # will be prepended to it for user to be able to tell server messages from another user's.
+        # Username; In case the server will send a text message to user the
+        # self.username will be prepended to it for user to be able to tell
+        # server messages from another user's.
         self.username = str("Server")
         # Assign a server socket.
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def __open_socket(self):
-        """
+        '''
         Create the server socket and bind it to the given host and port.
-        """
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(self.CONN_QUEUE)
-        self.connections.append(self.server_socket)
+        '''
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind((self.host, self.port))
+        self.server_sock.listen(self.CONN_QUEUE)
+        self.connections.append(self.server_sock)
 
     def _disconnect(self, sock, logmessage="Client disconnected"):
-        """
+        '''
         (Force) Gracefully disconnect the client.
         :param sock: socket
         :param logmessage: optional message to write to log on disconnect.
-        """
+        '''
         # Shutdown the socket for read and write operations.
         try:
             sock.shutdown(socket.SHUT_RDWR)
@@ -133,22 +138,25 @@ class ChatServer(threading.Thread):
     # A method prefixed with two underscores, just like this one is
     # is a private method.
     def __sendmsg(self, sock, msg):
-        """
-        Prefix each message with a 4-byte length before sending it over to destination.
+        '''
+        Prefix each message with a 4-byte length before sending it over
+        to destination.
         :param sock: the incoming socket
         :param msg: the message to send
-        """
+        '''
         # Pack the message with 4 leading bytes representing the message length.
+        # JSON dictionaries are used insted of serialisation for the sake of
+        # portability.
         msg = struct.pack('>I', len(str(msg))) + bytes(msg, 'utf-8')
         # Sends the packed message.
         sock.send(msg)
 
     def _receivemsg(self, sock):
-        """
+        '''
         Receive an incoming message from the client and unpack it.
         :param sock: the incoming socket
         :return: the unpacked message
-        """
+        '''
         # The message data will be stored here.
         data = None
         # Will hold the total length of message (all msg_chunks combined).
@@ -179,18 +187,18 @@ class ChatServer(threading.Thread):
             return data.decode('utf-8')
 
 
-    def _broadcast(self, client_socket, client_message):
-        """
+    def _broadcast(self, client_sock, client_message):
+        '''
         Broadcast a message to all the clients different from both the server itself and
         the client sending the message (since it does not need it anyway; the
         person already know what he/she's sending).
-        :param client_socket: the socket of the client sending the message
+        :param client_sock: the socket of the client sending the message
         :param client_message: the message to broadcast
-        """
+        '''
         for sock in self.connections:
             # Remember the AND-OR-NOT thing.
-            is_not_the_server = sock != self.server_socket
-            is_not_the_client__sendmsging = sock != client_socket
+            is_not_the_server = sock != self.server_sock
+            is_not_the_client__sendmsging = sock != client_sock
             if is_not_the_server and is_not_the_client__sendmsging:
                 try:
                     self.__sendmsg(sock, client_message)
@@ -199,9 +207,9 @@ class ChatServer(threading.Thread):
                     self._disconnect(sock, "Client has been disconnected")
 
     def __run(self):
-        """
+        '''
         Actually run the server.
-        """
+        '''
         while self.running:
             # Get the list of streams available for reading.
             # Select those amongst sockets available in connection pool.
@@ -209,35 +217,43 @@ class ChatServer(threading.Thread):
             # since the select call cannot actualle select stdin on these systems.
             # Set the timeout for that to be 45 seconds.
             try:
-                ready_to_read, ready_to_write, in_error = select.select(self.connections, [], [], 60)
+                # [select] returns three values.
+                ready_to_read, ready_to_write, in_error = select.select(
+                    self.connections, [], [], 45
+                    )
+                # Removing unused variables.
+                del ready_to_write
+                del in_error
             except socket.error:
                 continue
             else:
                 for sock in ready_to_read:
                     # If this is our socket.
-                    if sock == self.server_socket:
+                    if sock == self.server_sock:
                         try:
                             # Then accept the connection.
-                            client_socket, client_address = self.server_socket.accept()
+                            client_sock, client_addr = self.server_sock.accept()
                         except socket.error:
                             break
                         else:
                             # Then add the connection to connection pool.
-                            self.connections.append(client_socket)
+                            self.connections.append(client_sock)
                             # And write a log message about it.
-                            logging.info("Client %s:%d connected", client_address[0], client_address[1])
+                            logging.info("Client %s:%d connected",
+                                         client_addr[0],
+                                         client_addr[1])
 
                             # Broadcast the "New guy has entered a room" message.
                             struct_msg = json.dumps({
                                 'uuid': str(uuid.uuid4()),
                                 'username': self.username,
                                 'type': 0,
-                                'body': "\r[{0}, {1}] entered the chat room".format(client_address[0], client_address[1]),
+                                'body': "\r[{0}, {1}] entered the chat room".format(client_addr[0], client_addr[1]),
                                 "command": None,
                                 "primarykey": None,
                                 "secondarykey": None
                             })
-                            self._broadcast(client_socket, struct_msg)
+                            self._broadcast(client_sock, struct_msg)
                     # Else we've got an incoming connection.
                     else:
                         try:
@@ -248,34 +264,48 @@ class ChatServer(threading.Thread):
                                 try:
                                     # Parse it (remember that we'are speaking JSON here).
                                     msg_dict = json.loads(data)
-                                    recv_msgtype = msg_dict["type"]
-                                    recv_msguuid = msg_dict["uuid"]
-                                    recv_command = msg_dict["command"]
+                                    recv_msgtype = msg_dict['type']
+                                    # recv_msguuid = msg_dict["uuid"]
+                                    recv_command = msg_dict['command']
+
+                                    # Pre-defined messages.
+
+                                    # Disconnected message.
+                                    dconn_msg = json.dumps({
+                                        'uuid': str(uuid.uuid4()),
+                                        'username': msg_dict['username'],
+                                        'type': 1,
+                                        'body': "Client [{0}, {1}] has gone offline".format(client_addr[0], client_addr[1]),
+                                        "command": 7,
+                                        "primarykey": None,
+                                        "secondarykey": None
+                                    })
                                 except (ValueError, TypeError):
                                     # If we failed to parse that JSON message.
                                     # Then set the message type to "msgerr" which is
                                     # a...uh.. "message error" or "error message" or something.
-                                    logging.info("Received invalid message from %s:%d", client_address[0], client_address[1])
+                                    logging.info("Received invalid message from %s:%d", client_addr[0], client_addr[1])
                                     # Then still broadcast it for client to take care of it.
                                     self._broadcast(sock, data)
                                 # If received message is a user message
                                 # (the one that client/user is trying to send over to everyone).
                                 # Then do not bother parsing it and just broadcats instead.
                                 if recv_msgtype == 0:
-                                    logging.info("Received/Broadcasting user message from %s:%d", client_address[0], client_address[1])
+                                    logging.info("Received/Broadcasting user message from %s:%d", client_addr[0], client_addr[1])
                                     self._broadcast(sock, data)
                                 # If received message is service message. Then parse and process it w/o broadcasting.
                                 elif recv_msgtype == 1:
-                                    logging.info("Received service message from %s:%d", client_address[0], client_address[1])
+                                    logging.info("Received service message from %s:%d", client_addr[0], client_addr[1])
                                     # If received message is a "shutdown client connection" service message.
                                     if recv_command == 9:
-                                        logging.info("Shutdown client command received; Disconnecting %s:%d", client_address[0], client_address[1])
+                                        logging.info("Shutdown client command received; Disconnecting %s:%d", client_addr[0], client_addr[1])
                                         # Let client die, since client has initialised a local shutdown procedure before sending this message.
                                         # Just sleep for 2 seccond. This might be not necessary but still.
                                         logging.info("Waiting for client to die.")
                                         time.sleep(2)
                                         # Unbind the socket, print log message and disconnect the client.
-                                        self._disconnect(sock, "Client %s:%d has been disconnected", client_address[0], client_address[1])
+                                        self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_addr[0], client_addr[1]))
+                                        self._broadcast(sock, dconn_msg)
                                         continue
                                     if recv_command == 0:
                                         # TODO --------------------------------------------------------------------------------------------------------------------
@@ -286,52 +316,61 @@ class ChatServer(threading.Thread):
 
                                     
                                     else:
-                                        logging.info("Unknown command \"%s\" received from %s:%d", str(msg_dict),  client_address[0], client_address[1])
+                                        logging.info("Unknown command \"%s\" received from %s:%d", str(msg_dict), client_addr[0], client_addr[1])
                         except socket.error:
                             # Broadcast "Client has gone offline" message to
                             # all the connected clients stating that a client has left a room.
-                            struct_msg = json.dumps({
+                            offline_msg = json.dumps({
                                 'uuid': str(uuid.uuid4()),
                                 'username': self.username,
                                 'type': 0,
-                                'body': "Client [{0}, {1}] has gone offline".format(client_address[0], client_address[1]),
+                                'body': "Client [{0}, {1}] has gone offline".format(client_addr[0], client_addr[1]),
                                 "command": None,
                                 "primarykey": None,
                                 "secondarykey": None
                             })
                             self._broadcast(sock, struct_msg)
-                            self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_address[0], client_address[1]))
+                            self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_addr[0], client_addr[1]))
                             continue
         # Clear the connection and stop.
         self.stop()
 
     def run(self):
-        """
+        '''
         Open a socker and run the server.
-        """
-        logging.info("Starting server. Listening to %s:%d...", self.host, self.port)
+        '''
+        logging.info(
+            "Starting server. Listening to %s:%d...",
+            self.host,
+            self.port
+            )
         self.__open_socket()
         self.__run()
 
     def stop(self):
-        """
+        '''
         Stops the server by setting the "running" flag before closing
         the socket connection, this will break the application loop.
-        """
-        logging.info("Stopping server. Closing connections to %s:%d...", self.host, self.port)
+        '''
+        logging.info(
+            "Stopping server. Closing connections to %s:%d...",
+            self.host,
+            self.port
+            )
         self.running = False
-        self.server_socket.close()
+        self.server_sock.close()
 
 
 def main():
-    """
+    '''
     The Main.
     Parse arguments and run a server session.
-    """
+    '''
     argparser = argparse.ArgumentParser(\
       formatter_class=argparse.RawTextHelpFormatter,
       description='Chat Room 43: Server',
-      epilog="Chat Room 43: Server v. {0}\n{1}".format(__version__, __copyright__))
+      epilog="Chat Room 43: Server v. {0}\n{1}".format(__version__,
+                                                       __copyright__))
     argparser.add_argument(\
       '-n', '--host',
       type=str,
@@ -355,7 +394,6 @@ def main():
     if parsed_args.versioninfo:
         print(_VERSIONINO_MSG)
         sys.exit(0)
-
     # Run the server.
     chat_server = ChatServer(parsed_args.host, parsed_args.port)
     chat_server.start()
