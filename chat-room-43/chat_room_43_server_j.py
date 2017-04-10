@@ -248,10 +248,7 @@ class ChatServer(threading.Thread):
                                 'uuid': str(uuid.uuid4()),
                                 'username': self.username,
                                 'type': 0,
-                                'body': "\r[{0}, {1}] entered the chat room".format(client_addr[0], client_addr[1]),
-                                "command": None,
-                                "primarykey": None,
-                                "secondarykey": None
+                                'body': "{0}:{1} entered the chat room".format(client_addr[0], client_addr[1])
                             })
                             self._broadcast(client_sock, struct_msg)
                     # Else we've got an incoming connection.
@@ -275,7 +272,7 @@ class ChatServer(threading.Thread):
                                         'uuid': str(uuid.uuid4()),
                                         'username': msg_dict['username'],
                                         'type': 1,
-                                        'body': "Client [{0}, {1}] has gone offline".format(client_addr[0], client_addr[1]),
+                                        'body': "Client {0} ({1}:{2}) has gone offline.".format(msg_dict['username'], client_addr[0], client_addr[1]),
                                         "command": 7,
                                         "primarykey": None,
                                         "secondarykey": None
@@ -300,9 +297,9 @@ class ChatServer(threading.Thread):
                                     if recv_command == 9:
                                         logging.info("Shutdown client command received; Disconnecting %s:%d", client_addr[0], client_addr[1])
                                         # Let client die, since client has initialised a local shutdown procedure before sending this message.
-                                        # Just sleep for 2 seccond. This might be not necessary but still.
+                                        # Just sleep for 2 seconds. This might be not necessary but still.
                                         logging.info("Waiting for client to die.")
-                                        time.sleep(2)
+                                        time.sleep(1)
                                         # Unbind the socket, print log message and disconnect the client.
                                         self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_addr[0], client_addr[1]))
                                         self._broadcast(sock, dconn_msg)
@@ -320,16 +317,8 @@ class ChatServer(threading.Thread):
                         except socket.error:
                             # Broadcast "Client has gone offline" message to
                             # all the connected clients stating that a client has left a room.
-                            offline_msg = json.dumps({
-                                'uuid': str(uuid.uuid4()),
-                                'username': self.username,
-                                'type': 0,
-                                'body': "Client [{0}, {1}] has gone offline".format(client_addr[0], client_addr[1]),
-                                "command": None,
-                                "primarykey": None,
-                                "secondarykey": None
-                            })
-                            self._broadcast(sock, struct_msg)
+     
+                            self._broadcast(sock, dconn_msg)
                             self._disconnect(sock, "Client {0}:{1} has been disconnected".format(client_addr[0], client_addr[1]))
                             continue
         # Clear the connection and stop.
