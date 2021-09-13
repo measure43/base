@@ -1,0 +1,275 @@
+#!/bin/zsh
+# Author: Ilya Burov
+# 13/09/2021
+#
+# Copyright (c) Ilya Burov. All rights reserved.
+
+SESSFILE="${HOME}/.sshfs_sessions"
+
+print_help() {
+cat << EOF
+sshfsctl: Mount SSHFS volumes.
+
+USAGE:
+    sshfsctl -s SESSION_NAME
+    sshfsctl REMOTE_URI MOUNTPOINT_NAME
+    sshfsctl -u MOUNTPOINT_NAME
+    sshfsctl -[ah]
+
+NON-OPTION ARGUMENTS:
+    SESSION_NAME
+        A name of the sesstion to open. See -s and examples.
+
+    REMOTE_URI
+        A remote URI to mount.  See -s and examples.
+
+OPTIONS:
+    -s, --session
+        Open a specified saved session.
+        You can save a session by adding it to ~/.sshfs_sessions file,
+        one session per row, each row must have the following format:
+            SESSION_NAME REMOTE_URI
+        E.g.:
+            sess1 janedoe@company.com:/home/janedoe
+
+        Will mount janedoe@company.com:/home/janedoe to ~/mnt/sess1
+        when opened
+
+        No whitespace, path separators, "at" signs, dollar signs, etc.
+        are allowed in SESSION_NAME. No whitespace is allowed in
+        REMOTE_URI.
+
+        No comments are allowed in ~/.sshfs_sessions file.
+
+        SESSION_NAME is also a mount point name.
+
+        This option has no effect when used in conjuntion with -u
+
+    -u, --umount
+        Unmount a specified mount point
+
+    -h, --help
+        Show this help message and exit
+
+EXAMPLES:
+    Open the sess1 session and mount the corresponding remote URI
+    to ~/mnt/sess1. See -s
+        $ sshfsctl -s sess1
+
+    Unmount the ~/mnt/sess1 mount point
+        $ sshfsctl -u -s sess1
+
+    Mount janedoe@company.com:/home/janedoe to ~/mnt/vol1
+        $ sshfsctl janedoe@company.com:/home/janedoe vol1
+
+EOF
+}
+
+printf_error() {
+    printf -- '* ERROR: %s\n' "$(printf ${@})" >&2
+}
+
+# 1 - what, 2 - where
+mount_sshfs() {
+    if [[ ${#} -ne 2 ]]; then
+        printf_error "mount_sshfs: Wrong number of arguments (%d for %d).\n" ${#} 2
+        return 1
+    fi
+
+    local _RLOC="${1}"
+    local _DIR="${2}"
+    local _MNTDIR="${HOME}/mnt/${_DIR}"
+
+    if [[ "${_DIR}" =~ \[/@:\] ]]; then
+        printf_error "%s: Bad mount directory name.\n" "${_DIR}"
+        return 1
+    elif [[ ! -d "${_MNTDIR}" ]]; then
+        if ! mkdir -p "${_MNTDIR}" 2> /dev/null; then
+            printf_error "%s: Cannot create.\n" "${_MNTDIR}"
+            return 1
+        fi
+    elif [[ ! -r "${_MNTDIR}" ]] || [[ ! -w "${_MNTDIR}" ]] || [[ ! -x "${_MNTDIR}" ]]; then
+        printf_error "%s: Insufficient permissions to mount to directory.\n" "${_MNTDIR}"
+        return 1
+    fi
+
+    if ! sshfs -o allow_other,default_permissions,follow_symlinks,disable_hardlink "${_RLOC}" "${_MNTDIR}"; then
+        printf_error "Failed to mount remote file system %s to local directory %s\n" "${_RLOC}" "${_MNTDIR}"
+        return 1
+    fi
+    printf "Successfully mounted remote file system %s to local directory %s\n" "${_RLOC}" "${_MNTDIR}"
+}
+
+unmount_sshfs() {
+    if [[ ${#} -ne 1 ]]; then
+        printf_error "unmount_sshfs: Wrong number of arguments (%d for %d).\n" ${#} 1
+        return 1
+    fi
+
+    local _DIR="${1}"
+    local _MNTDIR="${HOME}/mnt/${_DIR}"
+
+    if [[ "${_DIR}" =~ \[/@:\] ]]; then
+        printf_error "%s: Bad mount directory name.\n" "${_DIR}"
+        return 1
+    elif [[ ! -d "${_MNTDIR}" ]]; then
+        printf_error "%s: No such directory.\n" "${_MNTDIR}"
+        return 1
+    elif ! umount -vf -- "${_MNTDIR}"; then
+        printf_error "%s: Failed to unmout directory.\n" "${_MNTDIR}"
+        return 1
+    else
+        rmdir -- "${_MNTDIR}" 2> /dev/null
+    fi
+
+    printf "Successfully unmounted %s.\n" "${_MNTDIR}"
+}
+
+get_session() {
+    touch "${SESSFILE}"
+
+    if [[ ${#} -ne 1 ]]; then
+        printf_error "get_session: Wrong number of arguments (%d for %d).\n" ${#} 1
+        return 1
+    fi
+
+    local _SESSID="${1}"
+    if ! grep -qE '^\s*'"${_SESSID}"'\s+' "${SESSFILE}"; then
+        printf_error "%s: No such session.\n" "${_SESSID}"
+        return 1
+    elif [[ $(grep -cE '^\s*'"${_SESSID}"'\s+' "${SESSFILE}") -gt 1 ]]; then
+        printf_error "%s: Session name is not unique.\n" "${_SESSID}"
+        return 1
+    elif ! awk -v SESSID="${_SESSID}" '{if ($1 == SESSID && NF != 2) exit 1}' "${SESSFILE}"; then
+        printf_error "%s: Bad format of session details.\n" "${_SESSID}"
+        return 1
+    fi
+
+     awk -v SESSID="${_SESSID}" '{if ($1 == SESSID && NF == 2) {print $2, $1; exit 0}}' "${SESSFILE}"
+}
+
+
+
+OPTSPEC='huas:-:'
+OPT_UMOUNT=false
+OPT_ALL=false
+unset SESSID
+while getopts $OPTSPEC OPTCH; do
+    case $OPTCH in
+        h)
+            print_help
+            exit 0
+        ;;
+        a)
+            OPT_ALL=true
+        ;;
+        s)
+            SESSID="${OPTARG}"
+            if [[ ${SESSID:0:1} == '-' ]]; then
+                printf_error "No options are allowed after -%s.\n" $OPTCH
+                exit 1
+            fi
+        ;;
+        u)
+            OPT_UMOUNT=true
+        ;;
+        -)
+            case $OPTARG in
+                help)
+                    print_help
+                    exit 0
+                ;;
+                all)
+                    OPT_ALL=true
+                ;;
+                umount|unmount)
+                    OPT_UMOUNT=true
+                ;;
+                session)
+                    declare -a _TMPARG=( "${@}" )
+                    SESSID="${_TMPARG[$((OPTIND))]}"
+                    shift
+                    unset _TMPARG
+
+                    if [[ -z "${SESSID}" ]]; then
+                        printf_error "Argument is expected after --%s.\n" $OPTARG
+                        exit 1
+                    elif [[ ${SESSID:0:1} == '-' ]]; then
+                        printf_error "No options are allowed after --%s.\n" $OPTARG
+                        exit 1
+                    fi
+
+                ;;
+            esac
+
+        ;;
+        *)
+            exit 1
+        ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+
+if ! command -v sshfs > /dev/null; then
+    printf_error 'sshfs: No such command. Please install SSHFS and MacFUSE:\n'
+cat << EOF >&2
+
+  $ brew update
+  $ brew install macfuse
+  $ brew install sshfs
+
+  1) The version of MacFUSE available from Homebrew repositories
+     may not work on macOS 12. If that is your case, download the
+     latest version of MacFUSE from the following official website:
+
+     - https://osxfuse.github.io/
+
+  2) Make sure that you have sshfs on your PATH.
+
+EOF
+exit 1
+fi
+
+ST_EXIT=0
+ST_MOUNTED_SINGLE=false
+if "${OPT_UMOUNT}"; then
+    if ${OPT_ALL}; then
+        CNT_UMOUNT=0
+        while read MNT; do
+            ((CNT_UMOUNT++))
+            umount -vf -- "${MNT}"
+            rmdir -- "${MNT}" 2> /dev/null
+        done < <(find "${HOME}/mnt" -mindepth 1 -maxdepth 1 -type d -print)
+        printf 'Unmounted %d volume(s).\n' ${CNT_UMOUNT}
+    elif [[ -n ${SESSID} ]]; then
+        if get_session "${SESSID}" > /dev/null; then
+            unmount_sshfs $(get_session "${SESSID}" | awk '{print $2}')
+        else
+            ST_EXIT=1
+        fi
+    elif [[ ${#} -ne 1 ]]; then
+        printf_error "Wrong number of arguments (%d for %d). Expected a saved session or a mount point name.\n" ${#} 1
+        print_help
+        ST_EXIT=1
+    else
+        unmount_sshfs ${1}
+    fi
+elif [[ -z ${SESSID} && ${#} -ne 2 ]] || [[ -n ${SESSID} && ${#} -eq 2 ]]; then
+    printf_error "Expected a saved session name, or a mount point and remote node URI.\n"
+    print_help
+    ST_EXIT=1
+elif [[ ${#} -eq 2 ]]; then
+    mount_sshfs "${1}" "${2}" && ST_MOUNTED_SINGLE=true
+elif [[ -n ${SESSID} ]]; then
+    if get_session "${SESSID}" > /dev/null; then
+        mount_sshfs $(get_session "${SESSID}") && ST_MOUNTED_SINGLE=true
+    else
+        ST_EXIT=1
+    fi
+fi
+
+# TODO: ? prompt: Want an ssh session with that?
+
+exit $(($? > ST_EXIT ? $? : ST_EXIT))
