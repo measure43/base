@@ -2,7 +2,7 @@
 #
 # Author:     Ilya Burov
 # Version:    1.0
-# Date:       13/09/2021
+# Date:       06/10/2021
 # Platform:   macOS 12.0
 # GitHub URL: https://github.com/measure43
 
@@ -28,8 +28,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
-SESSFILE="${HOME}/.sshfstab"
+SSHFSTAB="${HOME}/.sshfstab"
+DIR_VOLUMES="${HOME}/mnt"
 
 print_help() {
 cat << EOF
@@ -43,55 +43,63 @@ USAGE:
 
 NON-OPTION ARGUMENTS:
     VOLUME
-        A name of the volume to mount. See -s and examples.
+        A name of the volume to mount. See -m
 
     REMOTE_URI
-        A remote URI to mount. See -s and examples.
+        A remote URI to mount. See -m
 
 OPTIONS:
     -a, --all
-        Mounts all volumes from ~/.sshfs_sessions or unmount all mounted
+        Mount all volumes from ~/.sshfstab or unmount all mounted
         volumes if used in conjuction with -u
 
     -m, --mount [VOLUME]
-        Mounts the specified volume.
-        You can save a volume by adding it to ~/.sshfs_sessions file,
+        Mount the specified volume.
+        You can save a volume by adding it to ~/.sshfstab file,
         one volume per row, each row must have the following format:
             VOLUME REMOTE_URI
+
         E.g.:
             vol0 janedoe@company.com:/home/janedoe
 
-        Will mount janedoe@company.com:/home/janedoe to ~/mnt/vol0
+        Will mount janedoe@company.com:/home/janedoe to ${DIR_VOLUMES}/vol0
 
         No whitespace, path separators, "at" signs, dollar signs, etc.
         are allowed in VOLUME. No whitespace is allowed in REMOTE_URI.
 
-        No comments are allowed in ~/.sshfs_sessions file.
+        No comments are allowed in ~/.sshfstab file.
 
         VOLUME is also a mount point name.
 
         This option has no effect when used in conjuntion with -u
 
     -u, --umount
-        Unmounts the specified mount point or all mounted SSHFS volumes
+        Unmount the specified mount point or all mounted SSHFS volumes
         if used in conjuction with -a
 
     -r, -rmdir
-        Removes mount directories after unmounting volumes if used in
+        Remove mount directories after unmounting volumes if used in
         conjuction with -u, has no effect otherwise
+
+    -l, --list
+        List all mounted SSHFS volumes.
+        This simply calls mount -t sshfs
+
+    -v, --version
+        Show versiion information and exit
 
     -h, --help
         Show this help message and exit
 
 EXAMPLES:
-    Open the sess1 session and mount the corresponding remote URI
-    to ~/mnt/sess1. See -m
-        $ sshfsctl -m sess1
+    Mount the volume named vol0
+    to /Volumes/vol0. See -m
+        $ sshfsctl -m vol0
 
-    Unmount the ~/mnt/sess1 mount point
-        $ sshfsctl -um sess1
+    Unmount the /Volumes/vol0 mount point
+        $ sshfsctl -um vol0
 
-    Mount janedoe@company.com:/home/janedoe to ~/mnt/vol1
+    Mount janedoe@company.com:/home/janedoe to ${DIR_VOLUMES}/vol1
         $ sshfsctl janedoe@company.com:/home/janedoe vol1
 
 DEPENDENCIES:
@@ -113,13 +121,27 @@ EOF
 }
 
 printf_error() {
-    printf -- '* ERROR: %s\n' "$(printf ${@})" >&2
+    printf -- '[error]: %s\n' "$(printf ${@})" >&2
+}
+
+printf_warn() {
+    printf -- '[warning]: %s\n' "$(printf ${@})" >&2
 }
 
 printf_info() {
-    printf -- '- %s\n' "$(printf ${@})"
+    printf -- '%s\n' "$(printf ${@})"
 }
 
+
+normalize() {
+    local WORD="$(printf '%s' "${1}" | tr -c '[:alnum:]' '_')"
+    if [[ -n "${WORD}" ]] && ! [[ "${WORD}" =~ $\_+^ ]]; then
+        echo "${WORD}"
+        return
+    fi
+    printf_error "%s: Unable to normalize (%s).\n" "${WORD}"
+    exit 1
+}
 
 # 1 - what, 2 - where
 mount_sshfs() {
@@ -130,9 +152,9 @@ mount_sshfs() {
 
     local _RLOC="${1}"
     local _DIR="${2}"
-    local _MNTDIR="${HOME}/mnt/${_DIR}"
+    local _MNTDIR="${DIR_VOLUMES}/$(normalize "${_DIR}")"
 
-    if [[ "${_DIR}" =~ \[/@:\] ]]; then
+    if ! [[ "${_DIR}" =~ ^[A-z0-9@_-]+$ ]]; then
         printf_error "%s: Bad mount directory name.\n" "${_DIR}"
         return 1
     elif [[ ! -d "${_MNTDIR}" ]]; then
@@ -145,6 +167,8 @@ mount_sshfs() {
         return 1
     fi
 
+    printf_info 'Mounting %s to %s...\n' "${_RLOC}" "${_MNTDIR}"
+
     if ! sshfs -o allow_other,default_permissions,follow_symlinks,disable_hardlink "${_RLOC}" "${_MNTDIR}"; then
         printf_error "Failed to mount remote file system %s to local directory %s\n" "${_RLOC}" "${_MNTDIR}"
         return 1
@@ -155,23 +179,24 @@ mount_sshfs() {
 unmount_sshfs() {
     local _RET=1
     if [[ ${#} -eq 0 ]]; then
-        if umount -at sshfs; then
-            printf "Successfully unmounted all SSHFS volumes.\n"
-            while read MNT; do
-                rmdir -- "${MNT}" 2> /dev/null
-            done < <(find "${HOME}/mnt" -mindepth 1 -maxdepth 1 -type d -print)
-            _RET=0
+        if umount -Aft macfuse,osxfuse,sshfs; then
+            printf_info "Successfully unmounted all MacFUSE/SSHFS volumes.\n"
+            # while read MNT; do
+            #     rmdir -- "${MNT}" 2> /dev/null
+            # done < <(find "${HOME}/mnt" -mindepth 1 -maxdepth 1 -type d -print)
+            # _RET=0
         else
-            printf_error "Failed to unmount one or more SSHFS volumes.\n"
+            printf_error "Failed to unmount one or more MacFUSE/SSHFS volumes.\n"
         fi
     else
         local _CNT_TOTAL=0
         local _CNT_UNMOUNTED=0
+        local _MNTDIR
         for _DIR in "${@}"; do
             ((_CNT_TOTAL++))
-            local _MNTDIR="${HOME}/mnt/${_DIR}"
+            _MNTDIR="${DIR_VOLUMES}/$(normalize "${_DIR}")"
 
-            if [[ "${_DIR}" =~ \[/@:\] ]]; then
+            if ! [[ "${_DIR}" =~ ^[A-z0-9@_-]+$ ]]; then
                 printf_error "%s: Bad mount directory name.\n" "${_DIR}"
             elif [[ ! -d "${_MNTDIR}" ]]; then
                 printf_error "%s: No such directory.\n" "${_MNTDIR}"
@@ -182,7 +207,7 @@ unmount_sshfs() {
             else
                 ((_CNT_UNMOUNTED++))
                 rmdir -- "${_MNTDIR}" 2> /dev/null
-                printf "Successfully unmounted %s.\n" "${_MNTDIR}"
+                printf_info "Successfully unmounted %s.\n" "${_MNTDIR}"
             fi
         done
     fi
@@ -195,34 +220,47 @@ unmount_sshfs() {
 
 }
 
-get_session() {
-    if ! touch "${SESSFILE}"; then
-        printf_error "%s: Cannot to create or update SSHFS file systems table.\n" "${SESSFILE}"
+get_vol() {
+    if ! touch "${SSHFSTAB}"; then
+        printf_error "%s: Cannot to create or update SSHFS file systems table.\n" "${SSHFSTAB}"
         return 1
     fi
 
     if [[ ${#} -ne 1 ]]; then
-        printf_error "get_session: Wrong number of arguments (%d for %d).\n" ${#} 1
+        printf_error "get_vol: Wrong number of arguments (%d for %d).\n" ${#} 1
         return 1
     fi
 
-    local _SESSID="${1}"
-    if ! grep -qE '^\s*'"${_SESSID}"'\s+' "${SESSFILE}"; then
-        printf_error "%s: No such session.\n" "${_SESSID}"
+    local _SESSID="$(awk -vID="${1}" \
+        'BEGIN {
+            ret=ID;
+        } {
+            if (NF == 3 && $1 == "alias" && $2 == ID) {
+                ret = $3;
+                exit;
+            }
+        } END {
+            print ret;
+        }' "${SSHFSTAB}")"
+
+
+    if ! grep -qE '^\s*'"${_SESSID}"'\s+' "${SSHFSTAB}"; then
+        printf_error "%s: No such volume.\n" "${_SESSID}"
         return 1
-    elif [[ $(grep -cE '^\s*'"${_SESSID}"'\s+' "${SESSFILE}") -gt 1 ]]; then
-        printf_error "%s: Session name is not unique.\n" "${_SESSID}"
+    elif [[ $(grep -cE '^\s*'"${_SESSID}"'\s+' "${SSHFSTAB}") -gt 1 ]]; then
+        printf_error "%s: Volume name is not unique.\n" "${_SESSID}"
         return 1
-    elif ! awk -v VOL_NAME="${_SESSID}" '{if ($1 == VOL_NAME && NF != 2) exit 1}' "${SESSFILE}"; then
-        printf_error "%s: Bad format of session details.\n" "${_SESSID}"
+    elif ! awk -v VOL_NAME="${_SESSID}" '{if ($1 == VOL_NAME && NF != 2) exit 1}' "${SSHFSTAB}"; then
+        printf_error "%s: Bad format of volume record.\n" "${_SESSID}"
         return 1
     fi
 
-     awk -v VOL_NAME="${_SESSID}" '{if ($1 == VOL_NAME && NF == 2) {print $2, $1; exit 0}}' "${SESSFILE}"
+     awk -v VOL_NAME="${_SESSID}" '{if ($1 == VOL_NAME && NF == 2) {print $2, $1; exit 0}}' "${SSHFSTAB}"
 }
 
+_ARGC=${#}
 
-OPTSPEC='huam:-:'
+OPTSPEC='ham:u:-:'
 OPT_UMOUNT=false
 OPT_MOUNT=false
 OPT_ALL=false
@@ -236,17 +274,30 @@ while getopts $OPTSPEC OPTCH; do
         a)
             OPT_ALL=true
         ;;
-        m)
-            OPT_MOUNT=true
-            VOL_NAME="${OPTARG}"
-            if [[ ${VOL_NAME:0:1} == '-' ]]; then
+        m|u)
+            case $OPTCH in
+                m)
+                    OPT_MOUNT=true
+                ;;
+                u)
+                    OPT_UMOUNT=true
+                ;;
+                *)
+                    # Make sure this doesn't happen
+                    print_help >&2
+                    exit 1
+                ;;
+            esac
+
+            if [[ ${OPTARG} == a || ${OPTARG} == '-a' || ${OPTARG} == '--all' ]]; then
+                OPT_ALL=true
+            elif [[ ${OPTARG:0:1} == '-' ]]; then
                 printf_error "No options are allowed after -%s.\n" $OPTCH
                 print_help >&2
                 exit 1
+            else
+                VOL_NAME="${OPTARG}"
             fi
-        ;;
-        u)
-            OPT_UMOUNT=true
         ;;
         -)
             case $OPTARG in
@@ -257,30 +308,42 @@ while getopts $OPTSPEC OPTCH; do
                 all)
                     OPT_ALL=true
                 ;;
-                umount|unmount)
-                    # unmount, right?
-                    OPT_UMOUNT=true
-                ;;
-                mount)
-                    OPT_MOUNT=true
+                mount|umount|unmount)
+                    case $OPTARG in
+                        mount)
+                            OPT_MOUNT=true
+                        ;;
+                        umount|unmount)
+                            OPT_UMOUNT=true
+                        ;;
+                        *)
+                            # Make sure this doesn't happen
+                            print_help >&2
+                            exit 1
+                        ;;
+                    esac
+
                     declare -a _TMPARG=( "${@}" )
-                    VOL_NAME="${_TMPARG[$((OPTIND))]}"
+                    _ARG="${_TMPARG[$((OPTIND))]}"
                     shift
                     unset _TMPARG
-
-                    if [[ -z "${VOL_NAME}" ]]; then
+                    if [[ "${_ARG}" == '--all' || "${_ARG}" == '-a' ]]; then
+                        OPT_ALL=true
+                        shift
+                    elif [[ -z "${_ARG}" ]] && ! ${OPT_ALL}; then
                         printf_error "Argument is expected after --%s.\n" $OPTARG
                         print_help >&2
                         exit 1
-                    elif [[ ${VOL_NAME:0:1} == '-' ]]; then
+                    elif [[ ${_ARG:0:1} == '-' ]]; then
                         printf_error "No options are allowed after --%s.\n" $OPTARG
                         print_help >&2
                         exit 1
+                    else
+                        VOL_NAME="${_ARG}"
                     fi
-
+                    unset _ARG
                 ;;
             esac
-
         ;;
         *)
             print_help >&2
@@ -292,8 +355,20 @@ done
 shift $((OPTIND - 1))
 
 
+if [[ ${_ARGC} -eq 0 ]]; then
+    printf_error "No arguments supplied. Expected one or more options, or a volume and a mount point name.\n" ${#} 2
+    print_help >&2
+    exit 1
+elif [[ ${#} -eq ${_ARGC} && ${#} -ne 2 ]]; then
+    printf_error "Wrong number of arguments (%d for %d). Expected one or more options, or a volume and a mount point name.\n" ${#} 2
+    print_help >&2
+    exit 1
+elif [[ ${#} -eq 2 ]]; then
+    OPT_MOUNT=true
+fi
+
 if ! command -v sshfs > /dev/null; then
-    printf_error 'sshfs: Command not found. %s requires macFUSE and SSHFS.\n' $0
+    printf_error 'sshfs: Command not found. %s requires macFUSE and SSHFS.\n' $(basename -- $0)
     print_help >&2
     exit 1
 fi
@@ -304,8 +379,8 @@ if $OPT_UMOUNT; then
     if $OPT_ALL; then
         unmount_sshfs
     elif [[ -n ${VOL_NAME} ]]; then
-        if get_session "${VOL_NAME}" > /dev/null; then
-            unmount_sshfs $(get_session "${VOL_NAME}" | awk '{print $2}')
+        if get_vol "${VOL_NAME}" > /dev/null; then
+            unmount_sshfs $(get_vol "${VOL_NAME}" | awk '{print $2}')
         else
             ST_EXIT=1
         fi
@@ -318,43 +393,49 @@ if $OPT_UMOUNT; then
     fi
 elif $OPT_MOUNT; then
     if $OPT_ALL; then
-        if ! touch "${SESSFILE}"; then
-            printf_error "%s: Cannot to create or update SSHFS file systems table.\n" "${SESSFILE}"
+        if ! touch "${SSHFSTAB}"; then
+            printf_error "%s: Cannot to create or update SSHFS file systems table.\n" "${SSHFSTAB}"
             return 1
         fi
 
         CNT_SUCCESS=0
         CNT_FAIL=0
         while read VOL_NAME; do
-            if get_session "${VOL_NAME}" > /dev/null; then
-                mount_sshfs $(get_session "${VOL_NAME}") && ((CNT_SUCCESS++)) || ((CNT_FAIL++))
+            if [[ "${VOL_NAME}" != 'alias' ]]; then
+                typeset -a A_VOL=( $(get_vol "${VOL_NAME}") )
+                if  [[ ${#A_VOL[@]} -eq 2 ]]; then
+                    if mount_sshfs $(get_vol "${VOL_NAME}"); then
+                        ((CNT_SUCCESS++))
+                    else
+                        ((CNT_FAIL++))
+                    fi
+
+                fi
             fi
-        done < <(awk '{print $1}' "${SESSFILE}")
+        done < <(awk '{print $1}' "${SSHFSTAB}")
 
         if [[ ${CNT_SUCCESS} -ge 0 ]]; then
-            printf 'Mounted %d volume(s).\n' ${CNT_SUCCESS}
+            printf_info 'Mounted %d volume(s).\n' ${CNT_SUCCESS}
         fi
 
         if [[ ${CNT_FAIL} -gt 0 ]]; then
-            printf 'Failed to mount %d volume(s).\n' ${CNT_FAIL}
+            printf_error 'Failed to mount %d volume(s).\n' ${CNT_FAIL}
             ST_EXIT=1
         fi
 
     elif [[ -z "${VOL_NAME}" && ${#} -ne 2 ]] || [[ -n "${VOL_NAME}" && ${#} -eq 2 ]]; then
         printf_error "Expected a volume name or a mount point and remote node URI.\n"
-        print_help
+        print_help >&2
         ST_EXIT=1
     elif [[ ${#} -eq 2 ]]; then
         mount_sshfs "${1}" "${2}" && ST_MOUNTED_SINGLE=true
     elif [[ -n "${VOL_NAME}" ]]; then
-        if get_session "${VOL_NAME}" > /dev/null; then
-            mount_sshfs $(get_session "${VOL_NAME}") && ST_MOUNTED_SINGLE=true
+        if get_vol "${VOL_NAME}" > /dev/null; then
+            mount_sshfs $(get_vol "${VOL_NAME}") && ST_MOUNTED_SINGLE=true
         else
             ST_EXIT=1
         fi
     fi
 fi
-
-# TODO: ? prompt: Want an ssh session with that?
 
 exit $(($? > ST_EXIT ? $? : ST_EXIT))
